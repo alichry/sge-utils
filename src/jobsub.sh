@@ -4,21 +4,14 @@
 set -e
 
 config_file="/etc/sge-utils/jobsub.conf"
-qsub="qsub"
-cdm="$(date +%d%m)"
-jobs_dir="/home/$USER/.jobs/${cdm}"
-scal_dir="/home/$USER/.scal"
-jobs_byjid_dir="/home/$USER/.jobs/by-jid"
-submissions_dir="/home/$USER/.submissions/${cdm}"
-last_index_file="${jobs_dir}/.last"
 
 usage="Job Sumission Usage:
     `basename "${0}"` [OPTIONS] <environment> <slots> <program> [args..]
 OPTIONS:
-    [-c, --config <conf>]       use <conf> as the config file
-    [-t, --template <name>]     use <name> as the template name
-    [-s, --scal]                submits multiple jobs, each using up to <slots> (1,2,4,8,..,<slots>)
-    [-n, --no-output-sl]        do not create symbolic link in current working directory
+    -c, --config <conf>         use <conf> as the config file
+    -t, --template <name>       use <name> as the template name
+    -s, --scal                  submits multiple jobs, each using up to <slots> (1,2,4,8,..,<slots>)
+    -n, --no-output-sl          do not create symbolic link in current working directory
 Where:
     <environment> is the desired environment -- acceptable values are 'mpi', 'cuda' and 'smp'
     <slots> is the number of requested slots (for MPI this is # of cores),
@@ -191,11 +184,14 @@ readconf () {
     # $1 - config file
     # $2 - section name
     # @env $USER
-    # @env $cdm
+    # @env $HOME
     # first we assume that there are several blocks after $1 section
     # grep -Pzo '(?s)(?<=^\[jobsub\])(.*?)(?=^\[)' jobsub.conf
     # if the above command fails (no match), then there is
     # only no sections after [$1].
+    local cdm
+    local cmy
+    local cy
     local configfile
     local section
     local regex1
@@ -232,8 +228,22 @@ readconf () {
             "'${configfile}'" 1>&2
         return 1
     fi
+    # default conf
+    cdm="$(date +%d%m)"
+    cym="$(date +%m%Y)"
+    cy="$(date +%Y)"
+    [ -z "${qsub}" ] && qsub="qsub"
+    [ -z "${jobs_dir}" ] && jobs_dir="/home/$USER/.jobs/${cdm}"
+    [ -z "${jobs_byjid_dir}" ] && jobs_byjid_dir="/home/$USER/.jobs/by-jid"
+    [ -z "${jobs_last_index_file}" ] && jobs_last_index_file="${jobs_dir}/.last"
+    [ -z "${submissions_dir}" ] && submissions_dir="/home/$USER/.submissions/${cdm}"
+    [ -z "${scal_dir}" ] && scal_dir="/home/$USER/.scal"
+    [ -z "${scal_max_entries}" ] && scal_max_entries=10
+    [ -z "${scal_last_index_file}" ] && scal_last_index_file="${scal_dir}/.last"
+    [ -z "${scal_index_table_prefix}" ] && scal_index_table_prefix="scal.index"
     # some regex can be simply combined..
     # but different behavior occured on POSIX and GNU
+    # todo: replace grep lookaround with sed
     regex1="(?s)(?<=^\[${section}\])(.*?)(?=^\[)"
     regex2="(?s)(?<=^\[${section}\])(.*)"
     regex3='^([A-Za-z_]+)[ \t]*=[ \t]*"?(.*)"?$'
@@ -257,24 +267,33 @@ readconf () {
                 s/${regex3}/${regex4}/g;
                 s/${regex5}/${regex6}/g;
                 s/\\\$user/${USER}/g;
-                s/\\\$cdm/${cdm}/g" > "${tmpfile}"
-
+                s|\\\$home|${HOME}|g;
+                s/\\\$cdm/${cdm}/g;
+                s/\\\$cym/${cym}/g;
+                s/\\\$cy/${cy}/g" > "${tmpfile}"
+    # TODO: deal with duplicate entries
     case "$(echo "${section}" | cut -d " " -f 1)" in
         jobsub)
             tmp=`sed -n 's/^qsub=//p' "${tmpfile}"`
             [ -n "${tmp}" ] && qsub="${tmp}"
             tmp=`sed -n 's/^jobs_dir=//p' "${tmpfile}"`
             [ -n "${tmp}" ] && jobs_dir="${tmp}"
-            tmp=`sed -n 's/^scal_dir=//p' "${tmpfile}"`
-            [ -n "${tmp}" ] && scal_dir="${tmp}"
             tmp=`sed -n 's/^jobs_byjid_dir=//p' "${tmpfile}"`
             [ -n "${tmp}" ] && jobs_byjid_dir="${tmp}"
+            tmp=`sed -n 's/^jobs_last_index_file=//p' "${tmpfile}"`
+            [ -n "${tmp}" ] && jobs_last_index_file="${tmp}"
+            tmp=`sed -n 's/^scal_dir=//p' "${tmpfile}"`
+            [ -n "${tmp}" ] && scal_dir="${tmp}"
+            tmp=`sed -n 's/^scal_max_entries=//p' "${tmpfile}"`
+            [ -n "${tmp}" ] && scal_max_entries="${tmp}"
+            tmp=`sed -n 's/^scal_last_index_file=//p' "${tmpfile}"`
+            [ -n "${tmp}" ] && scal_last_index_file="${tmp}"
+            tmp=`sed -n 's/^scal_index_table_prefix=//p' "${tmpfile}"`
+            [ -n "${tmp}" ] && scal_index_table_prefix="${tmp}"
             tmp=`sed -n 's/^submissions_dir=//p' "${tmpfile}"`
             [ -n "${tmp}" ] && submissions_dir="${tmp}"
             tmp=`sed -n 's/^parallel_environments=//p' "${tmpfile}"`
             [ -n "${tmp}" ] && parallel_environments="${tmp}"
-            tmp=`sed -n 's/^last_index_file=//p' "${tmpfile}"`
-            [ -n "${tmp}" ] && last_index_file="${tmp}"
             ;;
         pe)
             tmp=`sed -n 's/^max_slots=//p' "${tmpfile}"`
@@ -598,25 +617,54 @@ submitjob () {
 
 addscal () {
     # $1 - scaldir
-    # $2 - jobs (list of space-seperated job ids)
+    # $2 - maxentries
+    # $3 - lif
+    # $4 - tableprefix
+    # $5 - jobs (list of space-seperated job ids)
     # @echo scalid in case of success
-    local jobs
     local scaldir
+    local maxentries
+    local lif
+    local tableprefix
+    local suffix
     local scalid
-    local scalfile
-    if [ "$#" -lt 2 ]; then
-        echo "Error: addscal - expecting 2 arguments, received $#" 1>&2
+    local scaltable
+    local jobs
+    if [ "$#" -lt 5 ]; then
+        echo "Error: addscal - expecting 5 arguments, received $#" 1>&2
         return 1
     fi
     scaldir="${1}"
-    jobs="${2}"
-    # Scalability ID the id of the first submitted job,
-    # they gave us a free unique ID, let's use it ..
-    scalid=`echo "${jobs}" | awk '{print $1}'`
-    scalfile="${scal_dir}/${scalid}.scal"
+    maxentries="${2}"
+    lif="${3}"
+    tableprefix="${4}"
+    jobs="${5}"
+    if [ -z "${scaldir}" ]; then
+        echo "Error: addscal - scaldir is not defined or empty" 1>&2
+        return 1
+    fi
+    if [ -z "${maxentries}" ]; then
+        echo "Error: addscal - max entries is not defined or empty" 1>&2
+        return 1
+    fi
+    if [ -z "${lif}" ]; then
+        echo "Error: addscal - last index file is not defined or empty" 1>&2
+        return 1
+    fi
+    if [ -z "${tableprefix}" ]; then
+        echo "Error: addscal - table prefix is not defined or empty" 1>&2
+        return 1
+    fi
+    if [ -z "${jobs}" ]; then
+        echo "Error: addscal - jobs is not defined or empty" 1>&2
+        return 1
+    fi
+    scalid=`nextindex "${lif}"`
+    suffix=$((scalid / maxentries))
+    scaltable="${scaldir}/${tableprefix}${suffix}"
 
-    printf "%d\n" ${jobs} > "${scalfile}"
-
+    printf "%d\t%s\n" "${scalid}" "${jobs}" >> "${scaltable}"
+    setindex "${lif}" "${scalid}"
     echo "${scalid}"
 }
 
@@ -643,7 +691,7 @@ run () {
         fi
         echo "Submitting job with ${nc} slots"
         if ! job_file=`genjob "${sub_template}" "${nc}" "${jobs_dir}" "${submissions_dir}" \
-            "${last_index_file}" "${prog}" "${prog_args}"`; then
+            "${jobs_last_index_file}" "${prog}" "${prog_args}"`; then
             exit $?
         fi
         if ! job_id=`submitjob "${job_file}"`; then
@@ -667,7 +715,9 @@ run () {
     done
 
     if [ -n "${option_scal}" ]; then
-        scal_id=`addscal "${scal_dir}" "${jobs}"`
+        scal_id=`addscal "${scal_dir}" "${scal_max_entries}" \
+            "${scal_last_index_file}" "${scal_index_table_prefix}" \
+            "${jobs}"`
     fi
 
     s=`test "${nc}" -gt "${nslots}" && printf "s"`
