@@ -1,6 +1,6 @@
 #!/bin/sh
 # Author: Ali Cherry
-# Constraint/note: suitable if usernames does not contain '~'
+# Constraint/note: suitable if username does not contain '~'
 set -e
 
 config_file="/etc/sge-utils/jobsub.conf"
@@ -101,9 +101,13 @@ valcl () {
 }
 
 quote () {
-    # Thanks http://www.etalabs.net/sh_tricks.html !
-    printf %s\\n "$1" | sed "s/'/'\\\\''/g;1s/^/'/;\$s/\$/'/" ;
+    # adapted from http://www.etalabs.net/sh_tricks.html thanks!
+    # single quotes
+    #printf %s\\n "$1" | sed "s/'/'\\\\''/g;1s/^/'/;\$s/\$/'/" ;
+    # double quotes (useful to allow expansion when the job is run)
+    printf %s\\n "${1}" | sed 's/"/\\"/g;1s/^/"/;$s/$/"/'
 }
+
 printusage () {
     echo "${usage}"
 }
@@ -198,8 +202,11 @@ readconf () {
     local regex2
     local regex3
     local regex4
+    local regex5
+    local regex6
     local conf
     local tmpfile
+    local tmp
     if [ "$#" -lt 2 ]; then
         echo "Error: readconf - expecting 2 arguments, received $#" 1>&2
         return 1
@@ -225,10 +232,15 @@ readconf () {
             "'${configfile}'" 1>&2
         return 1
     fi
+    # some regex can be simply combined..
+    # but different behavior occured on POSIX and GNU
     regex1="(?s)(?<=^\[${section}\])(.*?)(?=^\[)"
     regex2="(?s)(?<=^\[${section}\])(.*)"
-    regex3='^(\w*?)\s*=\s*("?)(.*?)\2$'
-    regex4='\1=\3'
+    regex3='^([A-Za-z_]+)[ \t]*=[ \t]*"?(.*)"?$'
+    regex4='\1=\2'
+    regex5='^(.*)(\\")?"$'
+    regex6='\1\2'
+
     if ! grep -Fq "[${section}]" "${configfile}"; then
         echo "readconf - missing section '${section}' from config" 1>&2
         return 1
@@ -241,40 +253,40 @@ readconf () {
         fi
     fi
     tmpfile=`mktemp`
-    echo "${conf}" | sed -r '/^$|^#.*$/d' | \
-        sed -r "s/${regex3}/${regex4}/g" > "${tmpfile}"
-
-    sed -i "s/\$user/${USER}/g;
-            s/\$cdm/${cdm}/g" "${tmpfile}"
+    echo "${conf}" | sed -E "/^\$|^#.*\$/d;
+                s/${regex3}/${regex4}/g;
+                s/${regex5}/${regex6}/g;
+                s/\\\$user/${USER}/g;
+                s/\\\$cdm/${cdm}/g" > "${tmpfile}"
 
     case "$(echo "${section}" | cut -d " " -f 1)" in
         jobsub)
-            grep -q "^qsub=" "${tmpfile}" && \
-                qsub=`sed -n 's/^qsub=//p' "${tmpfile}"`
-            grep -q "^jobs_dir=" "${tmpfile}" && \
-                jobs_dir=`sed -n 's/^jobs_dir=//p' "${tmpfile}"`
-            grep -q "^scal_dir=" "${tmpfile}" && \
-                scal_dir=`sed -n 's/^scal_dir=//p' "${tmpfile}"`
-            grep -q "^jobs_byjid_dir=" "${tmpfile}" && \
-                jobs_byjid_dir=`sed -n 's/^jobs_byjid_dir=//p' "${tmpfile}"`
-            grep -q "^submissions_dir=" "${tmpfile}" && \
-                submissions_dir=`sed -n 's/^submissions_dir=//p' "${tmpfile}"`
-            grep -q "^parallel_environments=" "${tmpfile}" && \
-                parallel_environments=`sed -n 's/^parallel_environments=//p' "${tmpfile}"`
-            grep -q "^last_index_file=" "${tmpfile}" && \
-                last_index_file=`sed -n 's/^last_index_file=//p' "${tmpfile}"`
+            tmp=`sed -n 's/^qsub=//p' "${tmpfile}"`
+            [ -n "${tmp}" ] && qsub="${tmp}"
+            tmp=`sed -n 's/^jobs_dir=//p' "${tmpfile}"`
+            [ -n "${tmp}" ] && jobs_dir="${tmp}"
+            tmp=`sed -n 's/^scal_dir=//p' "${tmpfile}"`
+            [ -n "${tmp}" ] && scal_dir="${tmp}"
+            tmp=`sed -n 's/^jobs_byjid_dir=//p' "${tmpfile}"`
+            [ -n "${tmp}" ] && jobs_byjid_dir="${tmp}"
+            tmp=`sed -n 's/^submissions_dir=//p' "${tmpfile}"`
+            [ -n "${tmp}" ] && submissions_dir="${tmp}"
+            tmp=`sed -n 's/^parallel_environments=//p' "${tmpfile}"`
+            [ -n "${tmp}" ] && parallel_environments="${tmp}"
+            tmp=`sed -n 's/^last_index_file=//p' "${tmpfile}"`
+            [ -n "${tmp}" ] && last_index_file="${tmp}"
             ;;
         pe)
-            grep -q "^max_slots=" "${tmpfile}" && \
-                max_slots=`sed -n 's/^max_slots=//p' "${tmpfile}"`
-            grep -q "^templates=" "${tmpfile}" && \
-                templates=`sed -n 's/^templates=//p' "${tmpfile}"`
-            grep -q "^default_template=" "${tmpfile}" && \
-                default_template=`sed -n 's/^default_template=//p' "${tmpfile}"`
+            tmp=`sed -n 's/^max_slots=//p' "${tmpfile}"`
+            [ -n "${tmp}" ] && max_slots="${tmp}"
+            tmp=`sed -n 's/^templates=//p' "${tmpfile}"`
+            [ -n "${tmp}" ] && templates="${tmp}"
+            tmp=`sed -n 's/^default_template=//p' "${tmpfile}"`
+            [ -n "${tmp}" ] && default_template="${tmp}"
             ;;
         template)
-            grep -q "^sub_template=" "${tmpfile}" && \
-                sub_template=`sed -n 's/^sub_template=//p' "${tmpfile}"`
+            tmp=`sed -n 's/^sub_template=//p' "${tmpfile}"`
+            [ -n "${tmp}" ] && sub_template="${tmp}"
             ;;
         *)
             echo "readconf - invalid section '${section}'" 1>&2
@@ -530,13 +542,14 @@ submitjob () {
         echo "Error: submitjob - passed jobfile '${jobfile}' is not readable" 1>&2
         return 5
     fi
-    penvs=`echo "${parallel_environments}" | sed -r 's/[ \t]+(\w)/\\\|\1/g'`
+    penvs=`echo "${parallel_environments}" | \
+        sed -E 's/[ \t]+([a-zA-Z_]+)/\\\|\1/g'`
     jobname=`grep "#\$ -N " "${jobfile}" | awk '{print $3}'`
 	outfile=`grep "#\$ -o " "${jobfile}" | awk '{print $3}'`
 	errfile=`grep "#\$ -e " "${jobfile}" | awk '{print $3}'`
     slots=`grep "#\$ -pe \(${penvs}\) " "${jobfile}" \
         | awk '{print $4}'`
-    progname=`echo "${jobname}" | sed -r 's/^.+~(.*)-[0-9]+-[0-9]+$/\1/'`
+    progname=`echo "${jobname}" | sed -E 's/^.+~(.*)-[0-9]+-[0-9]+$/\1/'`
 	if [ -z "${jobname}" -o -z "${outfile}" -o -z "${errfile}" ]; then
 		echo "Error: submitjob - unexpected error (1), consult your lab assistant" 1>&2
 		return 1
@@ -577,7 +590,6 @@ submitjob () {
         return 4
     fi
 	jobid=`echo "${sub}" | grep '^Your job [0-9]\+.*' | awk '{print $3}'`
-	ln -s "${jobfile}" "/jobs/${jobid}.job"
 	ln -s "${jobfile}" "${jobs_byjid_dir}/${jobid}.job"
 
     echo "${jobid}"
@@ -603,11 +615,8 @@ addscal () {
     scalid=`echo "${jobs}" | awk '{print $1}'`
     scalfile="${scal_dir}/${scalid}.scal"
 
-    for j in ${jobs}
-    do
-        echo "${j}" >> "${scalfile}"
-    done
-    ln -s "${scalfile}" "/scal/${scalid}.scal"
+    printf "%d\n" ${jobs} > "${scalfile}"
+
     echo "${scalid}"
 }
 
