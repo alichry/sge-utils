@@ -3,64 +3,163 @@
 
 set -e
 
-config_file="/etc/sge-utils/jobsub.conf"
-jobs_byjid_dir="/home/$USER/.jobs/by-jid"
-
-usage="Usage:   `basename "${0}"` [OPTIONS] jobid [jobid2 [jobidn]]
+usage="Usage:   `basename "${0}"` [OPTIONS] jobid [jobid2 [... [jobidn]]]
 OPTIONS:
-    [-c, --config <conf>]       use <conf> as the config file
-    [-o, --out]                 prints the stdout output of the job (conflicts with -e|-j)
-    [-e, --err]                 prints the stderr output of the job (conflicts with -o|-j)
-    [-j, --job]                 prints the corresponding jobsub file (conflicts with -o|-e)"
+    -c, --config <conf>         use <conf> as the config file
+    -s, --scal                  interpret jobids as scalids
+    -o, --out                   prints the stdout output of the job (conflicts with -e|-j)
+    -e, --err                   prints the stderr output of the job (conflicts with -o|-j)
+    -j, --job                   prints the corresponding jobsub file (conflicts with -o|-e)
+    -d, --debug <format>        prints the corressponding debug file. Available formats: vg%d where %d the is the relative logical processor id (starting from 0 regardless of cpuid)"
 
 printusage () {
     echo "${usage}"
 }
 
-readrlvconf () {
-    # $1 - configfile
-    # @out jobs_byjid_dir
+ctype_digit () {
+    case "${1}" in
+        ''|*[!0-9]*)
+            return 1
+            ;;
+        *)
+            return 0
+            ;;
+    esac
+}
+
+readconf () {
+    # $1 - config file
+    # $2 - section name
+    # @env $USER
+    # @env $HOME
+    # first we assume that there are several blocks after $1 section
+    # grep -Pzo '(?s)(?<=^\[jobsub\])(.*?)(?=^\[)' jobsub.conf
+    # if the above command fails (no match), then there is
+    # only no sections after [$1].
+    local cdm
+    local cmy
+    local cy
     local configfile
-    local jobsbjdir
+    local section
+    local regex1
+    local regex2
     local regex3
     local regex4
     local regex5
     local regex6
+    local conf
     local tmpfile
+    local tmp
+    if [ "$#" -lt 2 ]; then
+        echo "Error: readconf - expecting 2 arguments, received $#" 1>&2
+        return 1
+    fi
+    configfile="${1}"
+    section="${2}"
+    if [ -z "${configfile}" ]; then
+        echo "Error: readconf - passed config file argument " \
+            "is not defined or empty" 1>&2
+        return 1
+    fi
+    if [ -z "${section}" ]; then
+        echo "Error: readconf - passed section is not defined or empty" 1>&2
+        return 1
+    fi
+    if [ ! -f "${configfile}" ]; then
+        echo "Error: readconf - passed config file " \
+            "'${configfile}' does not exists" 1>&2
+        return 1
+    fi
+    if [ ! -r "${configfile}" ]; then
+        echo "Error: readconf - unable to read config file " \
+            "'${configfile}'" 1>&2
+        return 1
+    fi
+    # default conf
+    cdm="$(date +%d%m)"
+    cym="$(date +%m%Y)"
+    cy="$(date +%Y)"
+    [ -z "${qsub}" ] && qsub="qsub"
+    [ -z "${jobs_dir}" ] && jobs_dir="/home/$USER/.jobs/${cdm}"
+    [ -z "${jobs_byjid_dir}" ] && jobs_byjid_dir="/home/$USER/.jobs/by-jid"
+    [ -z "${jobs_last_index_file}" ] && jobs_last_index_file="${jobs_dir}/.last"
+    [ -z "${submissions_dir}" ] && submissions_dir="/home/$USER/.submissions/${cdm}"
+    [ -z "${scal_dir}" ] && scal_dir="/home/$USER/.scal"
+    [ -z "${scal_max_entries}" ] && scal_max_entries=10
+    [ -z "${scal_last_index_file}" ] && scal_last_index_file="${scal_dir}/.last"
+    [ -z "${scal_index_table_prefix}" ] && scal_index_table_prefix="scal.index"
+    # some regex can be simply combined..
+    # but different behavior occured on POSIX and GNU
+    regex1="(?s)(?<=^\[${section}\])(.*?)(?=^\[)"
+    regex2="(?s)(?<=^\[${section}\])(.*)"
     regex3='^([A-Za-z_]+)[ \t]*=[ \t]*"?(.*)"?$'
     regex4='\1=\2'
     regex5='^(.*)(\\")?"$'
     regex6='\1\2'
-    if [ "$#" -lt 1 ]; then
-        echo "Error: readrlvconf - expecting 1 argument, received $#" 1>&2
+
+    if ! grep -Fq "[${section}]" "${configfile}"; then
+        echo "readconf - missing section '${section}' from config" 1>&2
         return 1
     fi
-    configfile="${1}"
-    if [ -z "${configfile}" ]; then
-        echo "Error: readrlvconf - configfile is not defined or empty" 1>&2
-        return 1
-    fi
-    if [ ! -f "${configfile}" ]; then
-        echo "Error: readrlvconf - configfile '${configfile}' does \
-            not exists" 1>&2
-        return 1
-    fi
-    if [ ! -r "${configfile}" ]; then
-        echo "Error: readrlvconf - configfile '${configfile}' is not \
-            readable" 1>&2
-        return 1
+    if ! conf=`grep -Pzo "${regex1}" "${configfile}"`; then
+        if ! conf=`grep -Pzo "${regex2}" "${configfile}"`; then
+            echo "readconf - unable to read section '${section}', " \
+                "check your configuration" 1>&2
+            return 2
+        fi
     fi
     tmpfile=`mktemp`
-    grep -E '^(\[\w+\]|jobs_byjid_dir)' "${configfile}" \
-        | tail -n 1 \
-        | sed -E "s/\\\$user/${USER}/g;
-                  s/\\\$cdm/${cdm}/g;
-                  s/${regex3}/${regex4}/g;
-                  s/${regex5}/${regex6}/g" > "${tmpfile}"
-
-    jobsbjdir=`sed -n 's/^jobs_byjid_dir=//p' "${tmpfile}"`
-    [ -n "${jobsbjdir}" ] && jobs_byjid_dir="${jobsbjdir}"
+    echo "${conf}" | sed -E "/^\$|^#.*\$/d;
+                s/${regex3}/${regex4}/g;
+                s/${regex5}/${regex6}/g;
+                s/\\\$user/${USER}/g;
+                s|\\\$home|${HOME}|g;
+                s/\\\$cdm/${cdm}/g;
+                s/\\\$cym/${cym}/g;
+                s/\\\$cy/${cy}/g" > "${tmpfile}"
+    # TODO: deal with duplicate entries
+    case "$(echo "${section}" | cut -d " " -f 1)" in
+        jobsub)
+            tmp=`sed -n 's/^qsub=//p' "${tmpfile}"`
+            [ -n "${tmp}" ] && qsub="${tmp}"
+            tmp=`sed -n 's/^jobs_dir=//p' "${tmpfile}"`
+            [ -n "${tmp}" ] && jobs_dir="${tmp}"
+            tmp=`sed -n 's/^jobs_byjid_dir=//p' "${tmpfile}"`
+            [ -n "${tmp}" ] && jobs_byjid_dir="${tmp}"
+            tmp=`sed -n 's/^jobs_last_index_file=//p' "${tmpfile}"`
+            [ -n "${tmp}" ] && jobs_last_index_file="${tmp}"
+            tmp=`sed -n 's/^scal_dir=//p' "${tmpfile}"`
+            [ -n "${tmp}" ] && scal_dir="${tmp}"
+            tmp=`sed -n 's/^scal_max_entries=//p' "${tmpfile}"`
+            [ -n "${tmp}" ] && scal_max_entries="${tmp}"
+            tmp=`sed -n 's/^scal_last_index_file=//p' "${tmpfile}"`
+            [ -n "${tmp}" ] && scal_last_index_file="${tmp}"
+            tmp=`sed -n 's/^scal_index_table_prefix=//p' "${tmpfile}"`
+            [ -n "${tmp}" ] && scal_index_table_prefix="${tmp}"
+            tmp=`sed -n 's/^submissions_dir=//p' "${tmpfile}"`
+            [ -n "${tmp}" ] && submissions_dir="${tmp}"
+            tmp=`sed -n 's/^parallel_environments=//p' "${tmpfile}"`
+            [ -n "${tmp}" ] && parallel_environments="${tmp}"
+            ;;
+        pe)
+            tmp=`sed -n 's/^max_slots=//p' "${tmpfile}"`
+            [ -n "${tmp}" ] && max_slots="${tmp}"
+            tmp=`sed -n 's/^templates=//p' "${tmpfile}"`
+            [ -n "${tmp}" ] && templates="${tmp}"
+            tmp=`sed -n 's/^default_template=//p' "${tmpfile}"`
+            [ -n "${tmp}" ] && default_template="${tmp}"
+            ;;
+        template)
+            tmp=`sed -n 's/^sub_template=//p' "${tmpfile}"`
+            [ -n "${tmp}" ] && sub_template="${tmp}"
+            ;;
+        *)
+            echo "readconf - invalid section '${section}'" 1>&2
+            return 3
+            ;;
+    esac
     rm "${tmpfile}"
+    return 0
 }
 
 valcl () {
@@ -68,6 +167,7 @@ valcl () {
     # @out config_file
     # @out option_dest
     # @out jobs
+    local conflict_test
     local option_out
     local option_err
     local option_job
@@ -90,18 +190,29 @@ valcl () {
                 ;;
             -o|--out)
                 option_dest="${option_dest}o"
-                option_out=1
+                conflict_test="${conflict_test}1"
                 shift 1
                 ;;
             -e|--err)
                 option_dest="${option_dest}e"
-                option_err=1
+                conflict_test="${conflict_test}1"
                 shift 1
                 ;;
             -j|--job)
                 option_dest="${option_dest}j"
-                option_job=1
+                conflict_test="${conflict_test}1"
                 shift 1
+                ;;
+            -s|--scal)
+                option_dest="${option_dest}s"
+                conflict_test="${conflict_test}1"
+                shift 1
+                ;;
+            -d|--debug)
+                option_dest="${option_dest}d"
+                debug_format="${2}"
+                conflict_test="${conflict_test}1"
+                shift 2
                 ;;
             *)
                 break
@@ -109,7 +220,7 @@ valcl () {
         esac
     done
 
-    case "${option_out}${option_err}${option_job}" in
+    case "${conflict_test}" in
         *1*1*)
             echo "Error: conflicting output paramters." 1>&2
             return 1
@@ -117,6 +228,7 @@ valcl () {
         *)
             ;;
     esac
+
     jobs="$@"
     if [ -z "${jobs}" ]; then
         echo "Error, jobid passed is not defined or empty" 1>&2
@@ -166,6 +278,38 @@ does not exists, did you delete it ?" 1>&2
     return 0
 }
 
+vgminpid () {
+    # $1 debugfile (prefix only)
+    local debugfile
+    local file
+    local pid
+    local min
+    local opwd
+    if [ "$#" -lt 1 ]; then
+        echo "Error: vgminpid - expecting 1 parameter, received $#" 1>&2
+        return 1
+    fi
+    debugfile="${1}"
+    if [ -z "${debugfile}" ]; then
+        echo "Error: vgminpid - debugfile is not defined or empty"
+        return 1
+    fi
+    opwd="${PWD}"
+    cd `dirname "${debugfile}"`
+    debugfile=`basename "${debugfile}"`
+    for file in "${debugfile}".*
+    do
+        pid=`echo "${file}" | sed "s/^${debugfile}.//g"`
+        if ! ctype_digit "${pid}"; then
+            continue
+        fi
+        if [ -z "${min}" -o "${pid}" -lt "${min}" ]; then
+            min="${pid}"
+        fi
+    done
+    cd "${opwd}"
+}
+
 getdestfile () {
     # $1 dest o|e|j
     # $2 jobfile
@@ -173,18 +317,20 @@ getdestfile () {
     local dest
     local jobfile
     local out
+    local tmp
+    local tmp2
     if [ "$#" -lt 2 ]; then
-        echo "Error: catjob - expecting 2 arguments, received $#" 1>&2
+        echo "Error: getdestfile - expecting 2 arguments, received $#" 1>&2
         return 1
     fi
     dest="${1}"
     jobfile="${2}"
     if [ -z "${dest}" ]; then
-        echo "Error: catjob - dest is not defined or empty" 1>&2
+        echo "Error: getdestfile - dest is not defined or empty" 1>&2
         return 1
     fi
     if [ -z "${jobfile}" ]; then
-        echo "Error: catjob - jobfile is not defined or empty" 1>&2
+        echo "Error: getdestfile - jobfile is not defined or empty" 1>&2
         return 1
     fi
     case "${dest}" in
@@ -196,6 +342,18 @@ getdestfile () {
             ;;
         j)
             out="${jobfile}"
+            ;;
+        vg*)
+            tmp=`echo "${dest}" | sed 's/^vg//'`
+            if ! ctype_digit "${tmp}"; then
+                echo "Error: getdestfile - invalid debug format" 1>&2
+                return 1
+            fi
+            # lookabehinds are not in POSIX :-(
+            out=`sed -En "s/^.*--log-file=(\"?|'?)(.+)\.%p.*$\1/\2/p" "${jobfile}"`
+            tmp2=`vgminpid "${out}"`
+            tmp2=$((tmp2 + tmp))
+            out="${out}.${tmp2}"
             ;;
         *)
             echo "Error: catjob - invalid dest '${dest}'" 1>&2
@@ -269,6 +427,67 @@ catjobs () {
         echo "Warning: Some catjobs failed.." 1>&2
         return "${failed}"
     fi
+    return 0
+}
+
+scal2jobs () {
+    # $1 - scaldir
+    # $2 - maxentries
+    # $3 - tableprefix
+    # $4 space-seperated list of scalids
+    # @echo jobids
+    local scaldir
+    local maxentries
+    local tableprefix
+    local scals
+    local scalid
+    local scaltable
+    local res
+    local jobs
+    if [ "$#" -lt 4  ]; then
+        echo "Error: scal2jobs - expecting 4 arguments, received $#" 1>&2
+        return 1
+    fi
+    scaldir="${1}"
+    maxentries="${2}"
+    tableprefix="${3}"
+    scals="${4}"
+    if [ -z "${scaldir}" ]; then
+        echo "Error: scal2jobs - scaldir is not defined or empty" 1>&2
+        return 1
+    fi
+    if [ -z "${maxentries}" ]; then
+        echo "Error: scal2jobs - maxentries is not defined or empty" 1>&2
+        return 1
+    fi
+    if [ -z "${tableprefix}" ]; then
+        echo "Error: scal2jobs - tableplrefix is not defined or empty" 1>&2
+        return 1
+    fi
+    if [ -z "${scalid}" ]; then
+        echo "Error: scal2jobs - scals is not defined or empty" 1>&2
+        return 1
+    fi
+    if ! ctype_digit "${maxentries}"; then
+        echo "Error: scal2jobs - invalid maxentries '${maxentries}'" 1>&2
+        return 1
+    fi
+    for scalid in ${scals}
+    do
+        if ! ctype_digit "${scalid}"; then
+            echo "Error: scal2jobs - invalid scalid '${scalid}'" 1>&2
+            return 1
+        fi
+        suffix=$((scalid / maxentries))
+        scaltable="${scaldir}/${tableprefix}${suffix}"
+        res=`sed -En "s/^${scalid}\t(.*)\$/\1/p" "${scaltable}"`
+        if [ -z "${jobs}" ]; then
+            res="${jobs}"
+        else
+            jobs="${jobs} ${jobs}"
+        fi
+    done
+    echo "${jobs}"
     return 0
 }
 
