@@ -1,0 +1,9 @@
+#!/bin/bash
+#$ -N {JOB_NAME} 
+#$ -o {OUT_FILE}
+#$ -e {ERR_FILE}
+#$ -pe gpu {NSLOTS}
+#$ -q gpu
+#$ -cwd
+valgrind --leak-check=full \
+    --log-file="{DEBUG_FILE}.%p" "{PROG_PATH}" {PROG_ARGS}

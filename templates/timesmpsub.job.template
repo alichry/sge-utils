@@ -1,0 +1,10 @@
+#!/bin/bash
+#$ -N {JOB_NAME} 
+#$ -o {OUT_FILE}
+#$ -e {ERR_FILE}
+#$ -pe gpu {NSLOTS}
+#$ -q gpu
+#$ -cwd
+echo "time results with $NSLOTS slots:" 1>&2
+"{PROG_PATH}" {PROG_ARGS}
+echo "---------------------" 1>&2

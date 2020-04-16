@@ -1,0 +1,7 @@
+#!/bin/bash
+#$ -N {JOB_NAME} 
+#$ -o {OUT_FILE}
+#$ -e {ERR_FILE}
+#$ -pe mpi {NSLOTS}
+#$ -cwd
+mpirun -np $NSLOTS "{PROG_PATH}" {PROG_ARGS}

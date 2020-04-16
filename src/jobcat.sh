@@ -3,14 +3,25 @@
 
 set -e
 
-usage="Usage:   `basename "${0}"` [OPTIONS] jobid [jobid2 [... [jobidn]]]
+config_file="/etc/sge-utils/jobsub.conf"
+
+usage="Job output query usage:
+    `basename "${0}"` [OPTIONS] jobid [jobid2 [... [jobidn]]]
 OPTIONS:
+    -h, --help                  prints usage
     -c, --config <conf>         use <conf> as the config file
     -s, --scal                  interpret jobids as scalids
     -o, --out                   prints the stdout output of the job (conflicts with -e|-j)
     -e, --err                   prints the stderr output of the job (conflicts with -o|-j)
     -j, --job                   prints the corresponding jobsub file (conflicts with -o|-e)
-    -d, --debug <format>        prints the corressponding debug file. Available formats: vg%d where %d the is the relative logical processor id (starting from 0 regardless of cpuid)"
+    -d, --debug <format>        prints the corressponding debug file. Available formats:
+                                vgf prints the specified valgrind's --log-file format,
+                                vgl prints the generated process ids,
+                                vgp prints valgrind's generated log file(s),
+                                vgp%d prints the corresponding valgrind logfile
+                                where %p is the process id,
+                                vgpl%d is similar to vgp%d but %d is the logical
+                                (starting from 1) process id"
 
 printusage () {
     echo "${usage}"
@@ -171,10 +182,10 @@ valcl () {
     local option_out
     local option_err
     local option_job
-    if [ "$#" -lt 1 ]; then
-        echo "Error! Few arguments passed" 1>&2
+
+    if [ "$1" = "-h" -o "$1" = "--help" ]; then
         printusage
-        return 1
+        exit 0
     fi
 
     while [ "$#" -gt 1 ]
@@ -189,28 +200,27 @@ valcl () {
                 shift 2
                 ;;
             -o|--out)
-                option_dest="${option_dest}o"
+                option_dest="o"
                 conflict_test="${conflict_test}1"
                 shift 1
                 ;;
             -e|--err)
-                option_dest="${option_dest}e"
+                option_dest="e"
                 conflict_test="${conflict_test}1"
                 shift 1
                 ;;
             -j|--job)
-                option_dest="${option_dest}j"
+                option_dest="j"
                 conflict_test="${conflict_test}1"
                 shift 1
                 ;;
             -s|--scal)
-                option_dest="${option_dest}s"
-                conflict_test="${conflict_test}1"
+                option_scal=1
                 shift 1
                 ;;
             -d|--debug)
-                option_dest="${option_dest}d"
-                debug_format="${2}"
+                option_dest="d${2}"
+                option_debug=1
                 conflict_test="${conflict_test}1"
                 shift 2
                 ;;
@@ -220,7 +230,18 @@ valcl () {
         esac
     done
 
+    if [ "$#" -lt 1 ]; then
+        echo "Error! Few arguments passed" 1>&2
+        printusage
+        return 1
+    fi
+
+
     case "${conflict_test}" in
+        '')
+            # no dest specified, default is stdout
+            option_dest="o"
+            ;;
         *1*1*)
             echo "Error: conflicting output paramters." 1>&2
             return 1
@@ -246,91 +267,96 @@ getjobfile () {
     local jobid
     local jobpath
     if [ "$#" -lt 2 ]; then
-        echo "Error: jobfile - expecting 2 arguments, received $#" 1>&2
+        echo "Error: getjobfile - expecting 2 arguments, received $#" 1>&2
         return 1
     fi
     jobsbjdir="${1}"
     jobid="${2}"
     jobpath="${jobsbjdir}/${jobid}.job"
     if [ -z "${jobsbjdir}" ]; then
-        echo "Error: jobfile - jobs_by_jid is not defined or empty" 1>&2
+        echo "Error: getjobfile - jobs_by_jid is not defined or empty" 1>&2
         return 1
     fi
     if [ -z "${jobid}" ]; then
-        echo "Error: jobfile - jobid is not defined or empty" 1>&2
+        echo "Error: getjobfile - jobid is not defined or empty" 1>&2
         return 1
     fi
     if ! echo "${jobid}" | grep -Eq '^[0-9]+$'; then
-        echo "Error: jobfile - jobid '${jobid}' is not numerical" 1>&2
+        echo "Error: getjobfile - jobid '${jobid}' is not numerical" 1>&2
         return 1
     fi
     if [ ! -f "${jobpath}" ]; then
-        echo "Warning: jobfile - jobid '${jobid}' might be invalid" 1>&2
-        echo "Error: Jobfile - corresponding job file '${jobpath}' \
+        echo "Warning: getjobfile - jobid '${jobid}' might be invalid" 1>&2
+        echo "Error: getjobfile - corresponding job file '${jobpath}' \
 does not exists, did you delete it ?" 1>&2
         return 1
     fi
     if [ ! -r "${jobpath}" ]; then
-        echo "Error: jobfile - job file '${jobpath}' is not readable" 1>&2
+        echo "Error: getjobfile - job file '${jobpath}' is not readable" 1>&2
         return 1
     fi
     echo "${jobpath}"
     return 0
 }
 
-vgminpid () {
-    # $1 debugfile (prefix only)
+vgpid () {
+    # $1 debugfile prefix
+    # @echo pids
     local debugfile
     local file
     local pid
-    local min
+    local pids
     local opwd
     if [ "$#" -lt 1 ]; then
-        echo "Error: vgminpid - expecting 1 parameter, received $#" 1>&2
+        echo "Error: vgpid - expecting 1 parameter, received $#" 1>&2
         return 1
     fi
     debugfile="${1}"
     if [ -z "${debugfile}" ]; then
-        echo "Error: vgminpid - debugfile is not defined or empty"
+        echo "Error: vgpid - debugfile is not defined or empty" 1>&2
         return 1
     fi
     opwd="${PWD}"
     cd `dirname "${debugfile}"`
     debugfile=`basename "${debugfile}"`
-    for file in "${debugfile}".*
+    for file in "${debugfile}"*
     do
-        pid=`echo "${file}" | sed "s/^${debugfile}.//g"`
+        pid=`echo "${file}" | sed "s/^${debugfile}//g"`
         if ! ctype_digit "${pid}"; then
             continue
         fi
-        if [ -z "${min}" -o "${pid}" -lt "${min}" ]; then
-            min="${pid}"
+        if [ -z "${pids}" ]; then
+            pids="${pid}"
+        else
+            pids="${pids} ${pid}"
         fi
     done
+    pids=`printf "%d\n" ${pids} | sort -n`
     cd "${opwd}"
+    echo "${pids}"
 }
 
-getdestfile () {
-    # $1 dest o|e|j
+getdest () {
+    # $1 dest
     # $2 jobfile
-    # @echo destfile
+    # @echo dest(file)
     local dest
     local jobfile
     local out
+    local pid
     local tmp
-    local tmp2
     if [ "$#" -lt 2 ]; then
-        echo "Error: getdestfile - expecting 2 arguments, received $#" 1>&2
+        echo "Error: getdest - expecting 2 arguments, received $#" 1>&2
         return 1
     fi
     dest="${1}"
     jobfile="${2}"
     if [ -z "${dest}" ]; then
-        echo "Error: getdestfile - dest is not defined or empty" 1>&2
+        echo "Error: getdest - dest is not defined or empty" 1>&2
         return 1
     fi
     if [ -z "${jobfile}" ]; then
-        echo "Error: getdestfile - jobfile is not defined or empty" 1>&2
+        echo "Error: getdest - jobfile is not defined or empty" 1>&2
         return 1
     fi
     case "${dest}" in
@@ -343,50 +369,155 @@ getdestfile () {
         j)
             out="${jobfile}"
             ;;
-        vg*)
-            tmp=`echo "${dest}" | sed 's/^vg//'`
-            if ! ctype_digit "${tmp}"; then
-                echo "Error: getdestfile - invalid debug format" 1>&2
-                return 1
-            fi
-            # lookabehinds are not in POSIX :-(
-            out=`sed -En "s/^.*--log-file=(\"?|'?)(.+)\.%p.*$\1/\2/p" "${jobfile}"`
-            tmp2=`vgminpid "${out}"`
-            tmp2=$((tmp2 + tmp))
-            out="${out}.${tmp2}"
-            ;;
         *)
-            echo "Error: catjob - invalid dest '${dest}'" 1>&2
+            echo "Error: getdest - invalid dest '${dest}'" 1>&2
+            return 1
             ;;
     esac
     echo "${out}"
 }
 
+catdebug () {
+    # $1 jobid
+    # $2 jobfile
+    # $3 dest
+    local jobfile
+    local destopt
+    local format
+    local debugprefix
+    local debugsuffix
+    local pid
+    local tmp
+    local header
+    local str
+    local out
+    if [ "$#" -lt 3 ]; then
+        echo "Error: catdebug - expecting 3 arguments, received $#" 1>&2
+        return 1
+    fi
+    jobid="${1}"
+    jobfile="${2}"
+    destopt="${3}"
+    if [ -z "${jobid}" ]; then
+        echo "Error: catdebug - jobid is not defined or empty" 1>&2
+        return 1
+    fi
+    if [ -z "${jobfile}" ]; then
+        echo "Error: catdebug - jobfile is not defined or empty" 1>&2
+        return 1
+    fi
+    if [ -z "${destopt}" ]; then
+        echo "Error: catdebug - dest is not defined or empty" 1>&2
+        return 1
+    fi
+    if ! ctype_digit "${jobid}"; then
+        echo "Error: catdebug - jobid '${jobid}' is not numeric" 1>&2
+        return 1
+    fi
+    case "${destopt}" in
+        dvg*)
+            # log-file format string
+            # currently, the only legal log-format is {DEBUG_FILE}%p
+            debugprefix=`sed -En "s/^.*--log-file=(\"?|'?)(.+)(%p)\1.*$/\2\3/p" \
+                "${jobfile}"`
+            if [ "${debugprefix: -2}" = "%p" ]; then
+                debugprefix="${debugprefix:0:-2}"
+                debugsuffix="%p"
+            fi
+            case "${destopt}" in
+                dvgf)
+                    header="${jobid}@${jobfile}"
+                    str="${debugprefix}${debugsuffix}"
+                    ;;
+                dvgp)
+                    if [ -z "${debugsuffix}" ]; then
+                        echo "Error: catdebug - cant print pids, no valgrind\
+parameter was specified in log format '${debugprefix}'" 1>&2
+                        return 1
+                    fi
+                    header="${jobid}@${debugprefix}${debugsuffix}"
+                    str=`vgpid "${debugprefix}"`
+                    ;;
+                dvg)
+                    # print all
+                    if [ -z "${debugsuffix}" ]; then
+                        out="${debugprefix}${pid}"
+                        catfile "${out}" "${jobid}"
+                    else
+                        for file in "${debugprefix}"*
+                        do
+                            catfile "${file}" "${jobid}"
+                        done
+                    fi
+                    ;;
+                dvgl*)
+                    # dvg(l)%d
+                    pid=`echo "${destopt}" | sed 's/^dvgl//'`
+                    if ! ctype_digit "${pid}"; then
+                        echo "Error: catdebug - invalid debug format" 1>&2
+                        return 1
+                    fi
+                    tmp=`vgpid "${debugprefix}"`
+                    pid=`echo "${tmp}" | awk "FNR == ${pid} {print}"`
+                    if [ -z "${pid}" ]; then
+                        echo "Error: catdebug - invalid lpid '${pid}'" 1>&2
+                        return 1
+                    fi
+                    out="${debugprefix}${pid}"
+                    catfile "${out}" "${jobid}"
+                    ;;
+                dvg*)
+                    pid=`echo "${destopt}" | sed 's/^dvg//'`
+                    if ! ctype_digit "${pid}"; then
+                        echo "Error: catdebug - invalid debug format" 1>&2
+                        return 1
+                    fi
+                    out="${debugprefix}${pid}"
+                    catfile "${out}" "${jobid}"
+                    ;;
+            esac
+            ;;
+        *)
+            echo "Error: catdebug - invalid destopt '${destopt}'" 1>&2
+            return 1
+            ;;
+    esac
+    if [ -n "${str}" ]; then
+        echo "JOB========================${header}" 1>&2
+        echo "${str}"
+    fi
+    return 0
+}
+
 catfile () {
     # $1 dest file
+    # $2 headerprefx
     local file
+    local prefix
     if [ -z "${1}" ]; then
-        echo "Error: catjob - passed file is not defined or empty" 1>&2
+        echo "Error: catfile - passed file is not defined or empty" 1>&2
         return 1
     fi
     file="${1}"
+    prefix="${2}"
     if [ ! -r "${file}" ]; then
-        echo "Error: catjob - unable to read file '${file}'" 1>&2
+        echo "Error: catfile - unable to read file '${file}'" 1>&2
         return 1
     fi
+    echo "JOB========================${prefix}@${file}" 1>&2
     cat "${file}"
 }
 
 catjobs () {
     # $1 jobsbjdir
-    # $2 dest o|e|j
+    # $2 optiondest o|e|j
     # $3 space-seperated list of jobids
     local jobsbjdir
     local dest
     local jobs
     local jobid
     local jobfile
-    local destfile
+    local optiondest
     local failed
     failed=0
     if [ "$#" -lt 3 ]; then
@@ -394,14 +525,14 @@ catjobs () {
         return 1
     fi
     jobsbjdir="${1}"
-    dest="${2}"
+    optiondest="${2}"
     jobs="${3}"
     if [ -z "${jobsbjdir}" ]; then
         echo "Error: catjobs - jobsbjdir is not defined or empty" 1>&2
         return 1
     fi
-    if [ -z "${dest}" ]; then
-        echo "Error: catjobs - dest is not defined or empty" 1>&2
+    if [ -z "${optiondest}" ]; then
+        echo "Error: catjobs - optiondest is not defined or empty" 1>&2
         return 1
     fi
     if [ -z "${jobs}" ]; then
@@ -414,12 +545,17 @@ catjobs () {
             failed=1
             continue
         fi
-        if ! destfile=`getdestfile "${dest}" "${jobfile}"`; then
-            failed=1
+        if [ -z "${option_debug}" ]; then
+            if ! dest=`getdest "${optiondest}" "${jobfile}"`; then
+                failed=1
+                continue
+            fi
+            if ! catfile "${dest}" "${jobid}"; then
+                failed=1
+            fi
             continue
         fi
-        echo "JOB========================${jobid}@${destfile}" 1>&2
-        if ! catfile "${destfile}"; then
+        if ! catdebug "${jobid}" "${jobfile}" "${optiondest}"; then
             failed=1
         fi
     done
@@ -443,7 +579,7 @@ scal2jobs () {
     local scalid
     local scaltable
     local res
-    local jobs
+    local njobs
     if [ "$#" -lt 4  ]; then
         echo "Error: scal2jobs - expecting 4 arguments, received $#" 1>&2
         return 1
@@ -464,7 +600,7 @@ scal2jobs () {
         echo "Error: scal2jobs - tableplrefix is not defined or empty" 1>&2
         return 1
     fi
-    if [ -z "${scalid}" ]; then
+    if [ -z "${scals}" ]; then
         echo "Error: scal2jobs - scals is not defined or empty" 1>&2
         return 1
     fi
@@ -480,17 +616,27 @@ scal2jobs () {
         fi
         suffix=$((scalid / maxentries))
         scaltable="${scaldir}/${tableprefix}${suffix}"
+        if [ ! -f "${scaltable}" ]; then
+            echo "Warning: scal2jobs - possible invalid scalid '${scalid}'" 1>&2
+            echo "Error: scal2jobs - index table '${scaltable}' does not exists, \
+did you delete it?" 1>&2
+            continue
+        fi
         res=`sed -En "s/^${scalid}\t(.*)\$/\1/p" "${scaltable}"`
-        if [ -z "${jobs}" ]; then
-            res="${jobs}"
+        if [ -z "${njobs}" ]; then
+            njobs="${res}"
         else
-            jobs="${jobs} ${jobs}"
+            njobs="${njobs} ${res}"
         fi
     done
-    echo "${jobs}"
+    echo "${njobs}"
     return 0
 }
 
 valcl "$@"
-readrlvconf "${config_file}"
+readconf "${config_file}" "jobsub"
+if [ -n "${option_scal}" ]; then
+    jobs=`scal2jobs "${scal_dir}" "${scal_max_entries}" "${scal_index_table_prefix}" \
+        "${jobs}"`
+fi
 catjobs "${jobs_byjid_dir}" "${option_dest}" "${jobs}"

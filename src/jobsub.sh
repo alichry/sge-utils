@@ -5,9 +5,10 @@ set -e
 
 config_file="/etc/sge-utils/jobsub.conf"
 
-usage="Job Sumission Usage:
+usage="Job sumission usage:
     `basename "${0}"` [OPTIONS] <environment> <slots> <program> [args..]
 OPTIONS:
+    -h, --help                  prints usage
     -c, --config <conf>         use <conf> as the config file
     -t, --template <name>       use <name> as the template name
     -s, --scal                  submits multiple jobs, each using up to <slots> (1,2,4,8,..,<slots>)
@@ -29,11 +30,6 @@ valcl () {
     # @out nslots
     # @out prog_args
     local arg
-    if [ "$#" -lt 3 ]; then
-        echo "Error! Few arguments passed" 1>&2
-        printusage
-        return 1
-    fi
 
     while [ "$#" -gt 3 ]
     do
@@ -63,6 +59,12 @@ valcl () {
                 ;;
         esac
     done
+
+    if [ "$#" -lt 3 ]; then
+        echo "Error! Few arguments passed" 1>&2
+        printusage
+        return 1
+    fi
 
     environment="${1}"
 	nslots="${2}"
@@ -230,7 +232,7 @@ readconf () {
     fi
     # default conf
     cdm="$(date +%d%m)"
-    cym="$(date +%m%Y)"
+    cmy="$(date +%m%Y)"
     cy="$(date +%Y)"
     [ -z "${qsub}" ] && qsub="qsub"
     [ -z "${jobs_dir}" ] && jobs_dir="/home/$USER/.jobs/${cdm}"
@@ -269,7 +271,7 @@ readconf () {
                 s/\\\$user/${USER}/g;
                 s|\\\$home|${HOME}|g;
                 s/\\\$cdm/${cdm}/g;
-                s/\\\$cym/${cym}/g;
+                s/\\\$cmy/${cmy}/g;
                 s/\\\$cy/${cy}/g" > "${tmpfile}"
     # TODO: deal with duplicate entries
     case "$(echo "${section}" | cut -d " " -f 1)" in
@@ -720,12 +722,11 @@ run () {
             "${jobs}"`
     fi
 
-    s=`test "${nc}" -gt "${nslots}" && printf "s"`
-    submit_output="Your job${s} has been submitted, use 'qstat' to monitor the status of your job
+    s=`test "$((nc / 2))" -gt 1 -a -n "${option_scal}" && printf "s" || true`
+    submit_output="Your job${s} has been submitted, use 'qstat' to monitor the status of your job${s}.
 Job ID${s}: ${jobs}
 When the job is finished, it will disappear from qstat.
-    To view job's status after completion, use the following:
-        qacct -j ${jobs}
+    To view job's status after completion, use the 'qacct -j <jobid>'
     To display the output file of your job, after its completion use:
         jobcat -o ${jobs}
     To display the error file of your job, after its completion use:

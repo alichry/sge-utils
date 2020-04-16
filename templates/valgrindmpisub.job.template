@@ -1,0 +1,8 @@
+#!/bin/bash
+#$ -N {JOB_NAME} 
+#$ -o {OUT_FILE}
+#$ -e {ERR_FILE}
+#$ -pe mpi {NSLOTS}
+#$ -cwd
+mpirun -np $NSLOTS valgrind --leak-check=full \
+    --log-file="{DEBUG_FILE}.%n" "{PROG_PATH}" {PROG_ARGS}

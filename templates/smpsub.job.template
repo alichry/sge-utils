@@ -1,0 +1,7 @@
+#!/bin/bash
+#$ -N {JOB_NAME} 
+#$ -o {OUT_FILE}
+#$ -e {ERR_FILE}
+#$ -pe smp {NSLOTS}
+#$ -cwd
+"{PROG_PATH}" {PROG_ARGS}

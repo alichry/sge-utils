@@ -1,0 +1,9 @@
+#!/bin/bash
+#$ -N {JOB_NAME} 
+#$ -o {OUT_FILE}
+#$ -e {ERR_FILE}
+#$ -pe mpi {NSLOTS}
+#$ -cwd
+echo "time results with $NSLOTS slots:" 1>&2
+time mpirun -np $NSLOTS "{PROG_PATH}" {PROG_ARGS}
+echo "---------------------" 1>&2
