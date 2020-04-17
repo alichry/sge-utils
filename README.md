@@ -37,7 +37,7 @@ Example: jobsub mpi 1 a.out # will submit the compiled MPI program a.out with 1 
 ```
 ### Sample usage 
 ```
-$ jobsub -n -s -t mpi 2 helloworld
+$ jobsub -n -s mpi 2 helloworld
 Submitting job with 1 slots
 Submitting job with 2 slots
 Your jobs has been submitted, use 'qstat' to monitor the status of your jobs.
@@ -67,9 +67,9 @@ $ jobsub smp 1 "echo hello from \`hostname\`" # hello from ip-10-0-4-217
 ## Job output queries
 ### Usage
 ```
-[centos@ip-10-0-11-5 temp]$ ./jobcat.sh --help
+jobcat --help
 Job output query usage:
-    jobcat.sh [OPTIONS] jobid [jobid2 [... [jobidn]]]
+    jobcat [OPTIONS] jobid [jobid2 [... [jobidn]]]
 OPTIONS:
     -h, --help                  prints usage
     -c, --config <conf>         use <conf> as the config file
@@ -161,5 +161,5 @@ sub_template = /etc/sge-utils/templates/valgrindsmpsub.job.template
 
 ## TODO
 * Maybe seperate the usage of jobcat -d into a different tool.
-* Add usage, limitations and requirements in job templates
-* POSIX does not allow lookahead/behind in regular expressions, we have a few grep commandlines that are not compatible under Unix. Replace grep lookbehind with sed.
+* Add usage, limitations and requirements in job templates.
+* Check for POSIX compliance
