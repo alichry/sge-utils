@@ -43,21 +43,15 @@ readconf () {
     # $2 - section name
     # @env $USER
     # @env $HOME
-    # first we assume that there are several blocks after $1 section
-    # grep -Pzo '(?s)(?<=^\[jobsub\])(.*?)(?=^\[)' jobsub.conf
-    # if the above command fails (no match), then there is
-    # only no sections after [$1].
     local cdm
     local cmy
     local cy
     local configfile
     local section
-    local regex1
-    local regex2
-    local regex3
-    local regex4
-    local regex5
-    local regex6
+    local sedblock
+    local sedtrunc
+    local sedkv
+    local sedvars
     local conf
     local tmpfile
     local tmp
@@ -88,7 +82,7 @@ readconf () {
     fi
     # default conf
     cdm="$(date +%d%m)"
-    cym="$(date +%m%Y)"
+    cmy="$(date +%m%Y)"
     cy="$(date +%Y)"
     [ -z "${qsub}" ] && qsub="qsub"
     [ -z "${jobs_dir}" ] && jobs_dir="/home/$USER/.jobs/${cdm}"
@@ -99,35 +93,29 @@ readconf () {
     [ -z "${scal_max_entries}" ] && scal_max_entries=10
     [ -z "${scal_last_index_file}" ] && scal_last_index_file="${scal_dir}/.last"
     [ -z "${scal_index_table_prefix}" ] && scal_index_table_prefix="scal.index"
-    # some regex can be simply combined..
-    # but different behavior occured on POSIX and GNU
-    regex1="(?s)(?<=^\[${section}\])(.*?)(?=^\[)"
-    regex2="(?s)(?<=^\[${section}\])(.*)"
-    regex3='^([A-Za-z_]+)[ \t]*=[ \t]*"?(.*)"?$'
-    regex4='\1=\2'
-    regex5='^(.*)(\\")?"$'
-    regex6='\1\2'
+    sedblock="/^\[${section}\]/,/^\[/!d;
+              /^\[/d"
+    sedtrunc='/^$|^#/d'
+    # the below allows optional quotes, sadly does not work on Unix
+    #sedkv='s/^([A-Za-z_]+)[ \t]*=[ \t]*("?)(.*)\2$/\1=\3/g'
+    sedkv='s/^([A-Za-z_]+)[ \t]*=[ \t]*(.*)$/\1=\2/g'
+    sedvars="s/\\\$user/${USER}/g;
+             s|\\\$home|${HOME}|g;
+             s/\\\$cdm/${cdm}/g;
+             s/\\\$cmy/${cmy}/g;
+             s/\\\$cy/${cy}/g"
 
-    if ! grep -Fq "[${section}]" "${configfile}"; then
-        echo "readconf - missing section '${section}' from config" 1>&2
+    conf="$(sed -E "${sedblock};
+                    ${sedtrunc};
+                    ${sedkv};
+                    ${sedvars}" "${configfile}")"
+    if [ -z "${conf}" ]; then
+        echo "readconf - unable to read section '${section}', " \
+            "check your configuration" 1>&2
         return 1
     fi
-    if ! conf=`grep -Pzo "${regex1}" "${configfile}"`; then
-        if ! conf=`grep -Pzo "${regex2}" "${configfile}"`; then
-            echo "readconf - unable to read section '${section}', " \
-                "check your configuration" 1>&2
-            return 2
-        fi
-    fi
-    tmpfile=`mktemp`
-    echo "${conf}" | sed -E "/^\$|^#.*\$/d;
-                s/${regex3}/${regex4}/g;
-                s/${regex5}/${regex6}/g;
-                s/\\\$user/${USER}/g;
-                s|\\\$home|${HOME}|g;
-                s/\\\$cdm/${cdm}/g;
-                s/\\\$cym/${cym}/g;
-                s/\\\$cy/${cy}/g" > "${tmpfile}"
+    tmpfile="$(mktemp)"
+    echo "${conf}" > "${tmpfile}"
     # TODO: deal with duplicate entries
     case "$(echo "${section}" | cut -d " " -f 1)" in
         jobsub)
@@ -281,7 +269,7 @@ getjobfile () {
         echo "Error: getjobfile - jobid is not defined or empty" 1>&2
         return 1
     fi
-    if ! echo "${jobid}" | grep -Eq '^[0-9]+$'; then
+    if ! ctype_digit "${jobid}"; then
         echo "Error: getjobfile - jobid '${jobid}' is not numerical" 1>&2
         return 1
     fi
@@ -361,10 +349,10 @@ getdest () {
     fi
     case "${dest}" in
         o)
-            out=`grep "#\$ -o " "${jobfile}" | awk '{print $3}'`
+            out="$(sed -En 's/^#\$ -o (.*)$/\1/p' "${jobfile}")"
             ;;
         e)
-            out=`grep "#\$ -e " "${jobfile}" | awk '{print $3}'`
+            out="$(sed -En 's/^#\$ -e (.*)$/\1/p' "${jobfile}")"
             ;;
         j)
             out="${jobfile}"
@@ -417,8 +405,8 @@ catdebug () {
     case "${destopt}" in
         dvg*)
             # log-file format string
-            # currently, the only legal log-format is {DEBUG_FILE}%p
-            debugprefix=`sed -En "s/^.*--log-file=(\"?|'?)(.+)(%p)\1.*$/\2\3/p" \
+            # currently, the only legal value is --log-file="{DEBUG_FILE}"
+            debugprefix=`sed -En "s/^.*--log-file=(\"|')(.+)(%p)\1.*$/\2\3/p" \
                 "${jobfile}"`
             if [ "${debugprefix: -2}" = "%p" ]; then
                 debugprefix="${debugprefix:0:-2}"

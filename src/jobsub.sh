@@ -20,6 +20,29 @@ Where:
     and [args..] as optional arguments that are passed to your program.
 Example: `basename "${0}"` mpi 1 a.out # will submit the compiled MPI program a.out with 1 core"
 
+printusage () {
+    echo "${usage}"
+}
+
+ctype_digit () {
+    case "${1}" in
+        ''|*[!0-9]*)
+            return 1
+            ;;
+        *)
+            return 0
+            ;;
+    esac
+}
+
+quote () {
+    # adapted from http://www.etalabs.net/sh_tricks.html thanks!
+    # single quotes
+    #printf %s\\n "$1" | sed "s/'/'\\\\''/g;1s/^/'/;\$s/\$/'/" ;
+    # double quotes (useful to allow expansion when the job is run)
+    printf %s\\n "${1}" | sed 's/"/\\"/g;1s/^/"/;$s/$/"/'
+}
+
 valcl () {
     # $@ -> the cl
     # @out config_file
@@ -95,21 +118,10 @@ valcl () {
     return 0
 }
 
-quote () {
-    # adapted from http://www.etalabs.net/sh_tricks.html thanks!
-    # single quotes
-    #printf %s\\n "$1" | sed "s/'/'\\\\''/g;1s/^/'/;\$s/\$/'/" ;
-    # double quotes (useful to allow expansion when the job is run)
-    printf %s\\n "${1}" | sed 's/"/\\"/g;1s/^/"/;$s/$/"/'
-}
-
-printusage () {
-    echo "${usage}"
-}
 
 nextindex () {
     # $1 lif
-	# TODO: Use locking...
+    # TODO: Use locking...
     local lif
     local index
     if [ -z "${1}" ]; then
@@ -117,19 +129,19 @@ nextindex () {
         return 1
     fi
     lif="${1}"
-	if [ -f "${lif}" ]; then
-		index=`cat "${lif}"`
+    if [ -f "${lif}" ]; then
+        index=`cat "${lif}"`
         if [ -z "${index}" ]; then
             index=0
         fi
-        if ! echo "${index}" | grep -Eq '^[0-9]+$'; then
+        if ! ctype_digit "${index}"; then
             echo "Error: nextindex - invalid index '${index}'" 1>&2
             return 1
         fi
-		index=$((index + 1))
-	else
-		index=1
-	fi
+        index=$((index + 1))
+    else
+        index=1
+    fi
     echo "${index}"
     return 0
 }
@@ -137,7 +149,7 @@ nextindex () {
 setindex () {
     # $1 - lif
     # $2 - index value
-	# TODO: Use locking...
+    # TODO: Use locking...
     local lif
     local index
     if [ -z "${1}" ]; then
@@ -151,11 +163,11 @@ setindex () {
     fi
     lif="${1}"
     index="${2}"
-    if ! echo "${index}" | grep -Eq '^[0-9]+$'; then
+    if ! ctype_digit "${index}"; then
         echo "Error: setindex - invalid index '${index}'" 1>&2
         return 2
     fi
-	echo "${index}" > "${lif}"
+    echo "${index}" > "${lif}"
     return 0
 }
 
@@ -172,13 +184,13 @@ chk () {
         echo "Error: chk - \$cdm is not defined or empty" 1>&2
         return 999
     fi
-	case "$PWD/" in
-		/home/$USER/*)
-			;;
-		*)
-			echo "Error, please run `basename ${0}` from your home directory." 1>&2
-			return 1
-	esac
+    case "$PWD/" in
+        /home/$USER/*)
+            ;;
+        *)
+            echo "Error, please run `basename ${0}` from your home directory." 1>&2
+            return 1
+    esac
     return 0
 }
 
@@ -187,21 +199,15 @@ readconf () {
     # $2 - section name
     # @env $USER
     # @env $HOME
-    # first we assume that there are several blocks after $1 section
-    # grep -Pzo '(?s)(?<=^\[jobsub\])(.*?)(?=^\[)' jobsub.conf
-    # if the above command fails (no match), then there is
-    # only no sections after [$1].
     local cdm
     local cmy
     local cy
     local configfile
     local section
-    local regex1
-    local regex2
-    local regex3
-    local regex4
-    local regex5
-    local regex6
+    local sedblock
+    local sedtrunc
+    local sedkv
+    local sedvars
     local conf
     local tmpfile
     local tmp
@@ -243,36 +249,29 @@ readconf () {
     [ -z "${scal_max_entries}" ] && scal_max_entries=10
     [ -z "${scal_last_index_file}" ] && scal_last_index_file="${scal_dir}/.last"
     [ -z "${scal_index_table_prefix}" ] && scal_index_table_prefix="scal.index"
-    # some regex can be simply combined..
-    # but different behavior occured on POSIX and GNU
-    # todo: replace grep lookaround with sed
-    regex1="(?s)(?<=^\[${section}\])(.*?)(?=^\[)"
-    regex2="(?s)(?<=^\[${section}\])(.*)"
-    regex3='^([A-Za-z_]+)[ \t]*=[ \t]*"?(.*)"?$'
-    regex4='\1=\2'
-    regex5='^(.*)(\\")?"$'
-    regex6='\1\2'
+    sedblock="/^\[${section}\]/,/^\[/!d;
+              /^\[/d"
+    sedtrunc='/^$|^#/d'
+    # the below allows optional quotes, sadly does not work on Unix
+    #sedkv='s/^([A-Za-z_]+)[ \t]*=[ \t]*("?)(.*)\2$/\1=\3/g'
+    sedkv='s/^([A-Za-z_]+)[ \t]*=[ \t]*(.*)$/\1=\2/g'
+    sedvars="s/\\\$user/${USER}/g;
+             s|\\\$home|${HOME}|g;
+             s/\\\$cdm/${cdm}/g;
+             s/\\\$cmy/${cmy}/g;
+             s/\\\$cy/${cy}/g"
 
-    if ! grep -Fq "[${section}]" "${configfile}"; then
-        echo "readconf - missing section '${section}' from config" 1>&2
+    conf="$(sed -E "${sedblock};
+                    ${sedtrunc};
+                    ${sedkv};
+                    ${sedvars}" "${configfile}")"
+    if [ -z "${conf}" ]; then
+        echo "readconf - unable to read section '${section}', " \
+            "check your configuration" 1>&2
         return 1
     fi
-    if ! conf=`grep -Pzo "${regex1}" "${configfile}"`; then
-        if ! conf=`grep -Pzo "${regex2}" "${configfile}"`; then
-            echo "readconf - unable to read section '${section}', " \
-                "check your configuration" 1>&2
-            return 2
-        fi
-    fi
-    tmpfile=`mktemp`
-    echo "${conf}" | sed -E "/^\$|^#.*\$/d;
-                s/${regex3}/${regex4}/g;
-                s/${regex5}/${regex6}/g;
-                s/\\\$user/${USER}/g;
-                s|\\\$home|${HOME}|g;
-                s/\\\$cdm/${cdm}/g;
-                s/\\\$cmy/${cmy}/g;
-                s/\\\$cy/${cy}/g" > "${tmpfile}"
+    tmpfile="$(mktemp)"
+    echo "${conf}" > "${tmpfile}"
     # TODO: deal with duplicate entries
     case "$(echo "${section}" | cut -d " " -f 1)" in
         jobsub)
@@ -394,18 +393,18 @@ prepare () {
         echo "Error: prepare - scaldir argument is not defined or empty"
         return 1
     fi
-	if ! mkdir -p "${jobsdir}"; then
-		echo "Unable to create dir '${jobsdir}'" 1>&2
-		return 1
-	fi
-	if ! mkdir -p "${jobsbjdir}"; then
-		echo "Unable to create dir '${jobsbjdir}'" 1>&2
-		return 1
-	fi
-	if ! mkdir -p "${subdir}"; then
-		echo "Unable to create dir '${subdir}'" 1>&2
-		return 1
-	fi
+    if ! mkdir -p "${jobsdir}"; then
+        echo "Unable to create dir '${jobsdir}'" 1>&2
+        return 1
+    fi
+    if ! mkdir -p "${jobsbjdir}"; then
+        echo "Unable to create dir '${jobsbjdir}'" 1>&2
+        return 1
+    fi
+    if ! mkdir -p "${subdir}"; then
+        echo "Unable to create dir '${subdir}'" 1>&2
+        return 1
+    fi
     if ! mkdir -p "${scaldir}"; then
         echo "Unable to create dir '${scaldir}'" 1>&2
         return 1
@@ -474,7 +473,7 @@ genjob () {
         return 1
     fi
 
-	if ! echo "${slots}" | grep -Eq "^[0-9]+$"; then
+    if ! ctype_digit "${slots}"; then
 		echo "Error: genjob - invalid number of slots requested, not even numerical: ${slots}" 1>&2
 		return 5
 	fi
@@ -565,20 +564,20 @@ submitjob () {
     fi
     penvs=`echo "${parallel_environments}" | \
         sed -E 's/[ \t]+([a-zA-Z_]+)/\\\|\1/g'`
-    jobname=`grep "#\$ -N " "${jobfile}" | awk '{print $3}'`
-	outfile=`grep "#\$ -o " "${jobfile}" | awk '{print $3}'`
-	errfile=`grep "#\$ -e " "${jobfile}" | awk '{print $3}'`
-    slots=`grep "#\$ -pe \(${penvs}\) " "${jobfile}" \
-        | awk '{print $4}'`
+    jobname="$(sed -En 's/^#\$ -N (.*)$/\1/p' "${jobfile}")"
+    outfile="$(sed -En 's/^#\$ -o (.*)$/\1/p' "${jobfile}")"
+    errfile="$(sed -En 's/^#\$ -e (.*)$/\1/p' "${jobfile}")"
+    slots="$(sed -En 's/^#\$ -pe .+ ([0-9]+)$/\1/p' "${jobfile}")"
     progname=`echo "${jobname}" | sed -E 's/^.+~(.*)-[0-9]+-[0-9]+$/\1/'`
 	if [ -z "${jobname}" -o -z "${outfile}" -o -z "${errfile}" ]; then
-		echo "Error: submitjob - unexpected error (1), consult your lab assistant" 1>&2
+		echo "Error: submitjob - unable to retrieve jobname, outfile or errfile \
+from '${jobfile}'" 1>&2
 		return 1
 	fi
     if [ -z "${slots}" ]; then
         slots=1
-        echo "Warning: submitjob - no slots value was found in jobfile/template. " \
-            "Using slots=1" 1>&2
+        echo "Warning: submitjob - no slots value was found in jobfile/template. \
+Using slots=1" 1>&2
     fi
 	outsl="${progname}-${slots}.out"
 	errsl="${progname}-${slots}.err"
@@ -599,7 +598,8 @@ submitjob () {
         echo "------------------------" 1>&2
     fi
 
-    if ! echo "${sub}" | grep -q '^Your job [0-9]\+.*'; then
+    jobid=`echo "${sub}" | sed -En 's/^Your job ([0-9]+).*$/\1/p'`
+    if [ -z "${jobid}" ]; then
         echo "Unable to retrieve job id, cleaning up." 1>&2
         if [ -z "${no_output_sl}" ]; then
             rm -i "${outsl}"
@@ -610,8 +610,8 @@ submitjob () {
         rm "${jobfile}"
         return 4
     fi
-	jobid=`echo "${sub}" | grep '^Your job [0-9]\+.*' | awk '{print $3}'`
-	ln -s "${jobfile}" "${jobs_byjid_dir}/${jobid}.job"
+
+	ln -si "${jobfile}" "${jobs_byjid_dir}/${jobid}.job"
 
     echo "${jobid}"
     return 0
