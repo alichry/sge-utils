@@ -90,8 +90,8 @@ valcl () {
     fi
 
     environment="${1}"
-	nslots="${2}"
-	prog="${3}"
+    nslots="${2}"
+    prog="${3}"
 
     if [ -z "${environment}" ]; then
         echo "Error: valcl - environment argument is not defined or empty" 1>&2
@@ -492,25 +492,25 @@ genjob () {
         echo "Error: genjob - passed job template '${template}' is not readable" 1>&2
         return 8
     fi
-	if [ ! -f "${progpath}" ]; then
+    if [ ! -f "${progpath}" ]; then
         if ! command -v "${progpath}" > /dev/null 2>&1; then
-		    echo "Passed program '${progpath}' does not exists!" 1>&2
-		    return 4
+            echo "Passed program '${progpath}' does not exists!" 1>&2
+            return 4
         fi
         progpath=`which "${progpath}"`
-	fi
-	if [ ! -x "${progpath}" ]; then
+    fi
+    if [ ! -x "${progpath}" ]; then
         echo "Passed program '${progpath}' is not executable, make sure " \
             "it refers to a compiled binary or a script" 1>&2
-		return 5
-	fi
+        return 5
+    fi
 
     index=`nextindex "${lif}"`
 
-	jobname="${USER}~${progname}-${slots}-${index}"
-	outfile="${subdir}/${jobname}.out"
-	errfile="${subdir}/${jobname}.err"
-	jobfile="${jobsdir}/${jobname}.job"
+    jobname="${USER}~${progname}-${slots}-${index}"
+    outfile="${subdir}/${jobname}.out"
+    errfile="${subdir}/${jobname}.err"
+    jobfile="${jobsdir}/${jobname}.job"
     debugfile="${subdir}/${jobname}.vg"
 
     sed "s|{JOB_NAME}|${jobname}|g;
@@ -569,30 +569,30 @@ submitjob () {
     errfile="$(sed -En 's/^#\$ -e (.*)$/\1/p' "${jobfile}")"
     slots="$(sed -En 's/^#\$ -pe .+ ([0-9]+)$/\1/p' "${jobfile}")"
     progname=`echo "${jobname}" | sed -E 's/^.+~(.*)-[0-9]+-[0-9]+$/\1/'`
-	if [ -z "${jobname}" -o -z "${outfile}" -o -z "${errfile}" ]; then
-		echo "Error: submitjob - unable to retrieve jobname, outfile or errfile \
-from '${jobfile}'" 1>&2
-		return 1
-	fi
+    if [ -z "${jobname}" -o -z "${outfile}" -o -z "${errfile}" ]; then
+        echo "Error: submitjob - unable to retrieve jobname, outfile or errfile \
+    from '${jobfile}'" 1>&2
+        return 1
+    fi
     if [ -z "${slots}" ]; then
         slots=1
         echo "Warning: submitjob - no slots value was found in jobfile/template. \
 Using slots=1" 1>&2
     fi
-	outsl="${progname}-${slots}.out"
-	errsl="${progname}-${slots}.err"
+    outsl="${progname}-${slots}.out"
+    errsl="${progname}-${slots}.err"
 
-	touch "${outfile}"
-	touch "${errfile}"
+    touch "${outfile}"
+    touch "${errfile}"
 
     if [ -z "${no_output_sl}" ]; then
         ln -si "${outfile}" "${outsl}"
         ln -si "${errfile}" "${errsl}"
     fi
 
-	sub=`"${qsub}" "${jobfile}" 2>&1`
-	if [ $? -ne 0 ]; then
-		echo "Some errors or warnings occurred. qsub exited with non-zero status." 1>&2
+    sub=`"${qsub}" "${jobfile}" 2>&1`
+    if [ $? -ne 0 ]; then
+        echo "Some errors or warnings occurred. qsub exited with non-zero status." 1>&2
         echo "qsub stdout/stderr:" 1>&2
         echo "${sub}" 1>&2
         echo "------------------------" 1>&2
@@ -611,7 +611,7 @@ Using slots=1" 1>&2
         return 4
     fi
 
-	ln -si "${jobfile}" "${jobs_byjid_dir}/${jobid}.job"
+    ln -si "${jobfile}" "${jobs_byjid_dir}/${jobid}.job"
 
     echo "${jobid}"
     return 0
