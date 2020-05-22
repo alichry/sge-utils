@@ -35,7 +35,7 @@ pad () {
     while [ "${i}" -lt "${2}" ];
     do
         str="${str}${1}"
-        ((i=i + 1))
+        i=$((i + 1))
     done
     printf "%s" "${str}"
     return 0
