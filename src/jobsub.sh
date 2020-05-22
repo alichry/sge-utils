@@ -18,6 +18,7 @@
 # Constraint/note: suitable if username does not contain '~'
 set -e
 
+script_name="$(basename "${0}")"
 config_file="/etc/sge-utils/jobsub.conf"
 
 startup_notice="\
@@ -25,22 +26,48 @@ SGE Utils Copyright 2020 Ali Cherry <cmcrc@alicherry.net> under GNU Affero
 General Public License version 3 or any later version. Source code retrievable
 from https://github.com/alichry/sge-utils"
 
+pad () {
+    # $1 - string
+    # $2 - count
+    local str
+    local i
+    str=""
+    i=0
+    while [ "${i}" -lt "${2}" ];
+    do
+        str="${str}${1}"
+        ((i=i + 1))
+    done
+    printf "%s" "${str}"
+    return 0
+}
+
+_pad=`pad " " "${#script_name}"`
+
 usage="Job sumission usage:
-    `basename "${0}"` [OPTIONS] <environment> <slots> <program> [args..]
-OPTIONS:
-    -h, --help                  prints usage
-    -a, --notice                prints startup notice on how to retrieve the
-                                source code of this program.
-    -c, --config <conf>         use <conf> as the config file
-    -t, --template <name>       use <name> as the template name
-    -s, --scal                  submits multiple jobs, each using up to <slots> (1,2,4,8,..,<slots>)
-    -n, --no-output-sl          do not create symbolic link in current working directory
+    ${script_name}  [-h|-a] [-c CONF] [-t TEMPLATE] [-s] [-n]
+    ${_pad}  environment slots program [args..]
+Options:
+    -h, --help          prints usage
+    -a, --notice        prints startup notice on how to retrieve the source
+                        code of this program.
+    -c CONF, --config CONF
+                        use CONF as the config file. Defaults to "${config_file}"
+    -t TEMPLATE, --template TEMPLATE
+                        use TEMPLATE as the template name
+    -s, --scal          submits multiple jobs, each using up to slots
+                        {1,2,4,8,..,slots}
+    -n, --no-output-sl  do not create symbolic link in current working directory
 Where:
-    <environment> is the desired environment -- acceptable values are mpi and smp.
-    <slots> is the number of requested slots (for MPI this is # of cores),
-    <program> is an executable. A compiled binary, script or command,
+    environment is the desired environment -- acceptable values are mpi and smp,
+    slots is the number of requested slots (for MPI this is # of cores),
+    program is an executable. A compiled binary, script or command,
     and [args..] as optional arguments that are passed to your program.
-Example: `basename "${0}"` mpi 1 a.out # will submit the compiled MPI program a.out with 1 core"
+Examples:
+    # submit compiled MPI program a.out with 1 core
+    \$ ${script_name} mpi 1 a.out
+    # submit a simple command with parameter expansion
+    \$ ${script_name} smp 1 echo hello from \`hostname\`"
 
 printnotice() {
     echo "${startup_notice}"

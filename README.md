@@ -20,20 +20,33 @@ Combining the above, jobsub is a suitable extension for an SGE workflow. Due its
 
 ```
 $ jobsub -h
+SGE Utils Copyright 2020 Ali Cherry <cmcrc@alicherry.net> under GNU Affero
+General Public License version 3 or any later version. Source code retrievable
+from https://github.com/alichry/sge-utils
 Job sumission usage:
-    jobsub [OPTIONS] <environment> <slots> <program> [args..]
-OPTIONS:
-    -h, --help                  prints usage
-    -c, --config <conf>         use <conf> as the config file
-    -t, --template <name>       use <name> as the template name
-    -s, --scal                  submits multiple jobs, each using up to <slots> (1,2,4,8,..,<slots>)
-    -n, --no-output-sl          do not create symbolic link in current working directory
+    jobsub  [-h|-a] [-c CONF] [-t TEMPLATE] [-s] [-n]
+            environment slots program [args..]
+Options:
+    -h, --help          prints usage
+    -a, --notice        prints startup notice on how to retrieve the source
+                        code of this program.
+    -c CONF, --config CONF
+                        use CONF as the config file. Defaults to /etc/sge-utils/jobsub.conf
+    -t TEMPLATE, --template TEMPLATE
+                        use TEMPLATE as the template name
+    -s, --scal          submits multiple jobs, each using up to slots
+                        {1,2,4,8,..,slots}
+    -n, --no-output-sl  do not create symbolic link in current working directory
 Where:
-    <environment> is the desired environment -- acceptable values are 'mpi', 'cuda' and 'smp'
-    <slots> is the number of requested slots (for MPI this is # of cores),
-    <program> is an executable. A compiled binary, script or command,
+    environment is the desired environment -- acceptable values are mpi and smp,
+    slots is the number of requested slots (for MPI this is # of cores),
+    program is an executable. A compiled binary, script or command,
     and [args..] as optional arguments that are passed to your program.
-Example: jobsub mpi 1 a.out # will submit the compiled MPI program a.out with 1 core
+Examples:
+    # submit compiled MPI program a.out with 1 core
+    $ jobsub mpi 1 a.out
+    # submit a simple command with parameter expansion
+    $ jobsub smp 1 echo hello from `hostname`
 ```
 ### Sample usage 
 ```
@@ -67,24 +80,39 @@ $ jobsub smp 1 "echo hello from \`hostname\`" # hello from ip-10-0-4-217
 ## Job output queries
 ### Usage
 ```
-jobcat --help
+$ jobcat --help
+SGE Utils Copyright 2020 Ali Cherry <cmcrc@alicherry.net> under GNU Affero
+General Public License version 3 or any later version. Source code retrievable
+from https://github.com/alichry/sge-utils
 Job output query usage:
-    jobcat [OPTIONS] jobid [jobid2 [... [jobidn]]]
-OPTIONS:
-    -h, --help                  prints usage
-    -c, --config <conf>         use <conf> as the config file
-    -s, --scal                  interpret jobids as scalids
-    -o, --out                   prints the stdout output of the job (conflicts with -e|-j)
-    -e, --err                   prints the stderr output of the job (conflicts with -o|-j)
-    -j, --job                   prints the corresponding jobsub file (conflicts with -o|-e)
-    -d, --debug <format>        prints the corressponding debug file. Available formats:
-                                vgf prints the specified valgrind's --log-file format,
-                                vgl prints the generated process ids,
-                                vgp prints valgrind's generated log file(s),
-                                vgp%d prints the corresponding valgrind logfile
-                                where %p is the process id,
-                                vgpl%d is similar to vgp%d but %d is the logical
-                                (starting from 1) process id
+    jobcat  [-h|-a] [-c CONF] [-s]
+            [-o|-e|-j|-d FORMAT] jobid [jobid2 [... [jobidn]]]
+Options:
+    -h, --help          prints usage
+    -a, --notice        prints startup notice on how to retrieve the source code
+                        of this program.
+    -c CONF, --config CONF
+                        use CONF as the config file.
+                        Defaults to /etc/sge-utils/jobsub.conf
+    -s, --scal          interpret jobids as scalids
+    -o, --out           prints the stdout output of the job, this is the default
+    -e, --err           prints the stderr output of the job
+    -j, --job           prints the corresponding jobsub file
+    -d FORMAT, --debug FORMAT
+                        prints the corressponding debug file. Available formats:
+                        vgf prints the specified valgrind's --log-file format,
+                        vgl prints the generated process ids,
+                        vgp prints valgrind's generated log file(s),
+                        vgp%d prints the corresponding valgrind logfile where
+                        %d is the process id,
+                        vgpl%d is similar to vgp%d but %d is the logical
+                        (starting from 1) process id
+Examples:
+    # print the stdout output of jobid = 1
+    $ jobcat 1
+    # Assume we submitted a scaljob with scalid = 1 and jobids = 1 2 3
+    # the below will print the stdout output of jobids 1 2 3
+    $ jobcat -s 1
 ```
 ### Sample usage
 Using jobid 146 (by default jobcat will print the output file -- stdout)

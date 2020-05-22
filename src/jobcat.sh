@@ -17,6 +17,7 @@
 
 set -e
 
+script_name="$(basename "${0}")"
 config_file="/etc/sge-utils/jobsub.conf"
 
 startup_notice="\
@@ -24,25 +25,53 @@ SGE Utils Copyright 2020 Ali Cherry <cmcrc@alicherry.net> under GNU Affero
 General Public License version 3 or any later version. Source code retrievable
 from https://github.com/alichry/sge-utils"
 
+pad () {
+    # $1 - string
+    # $2 - count
+    local str
+    local i
+    str=""
+    i=0
+    while [ "${i}" -lt "${2}" ];
+    do
+        str="${str}${1}"
+        ((i=i + 1))
+    done
+    printf "%s" "${str}"
+    return 0
+}
+
+_pad=`pad " " "${#script_name}"`
+
 usage="Job output query usage:
-    `basename "${0}"` [OPTIONS] jobid [jobid2 [... [jobidn]]]
-OPTIONS:
-    -h, --help                  prints usage
-    -a, --notice                prints startup notice on how to retrieve the
-                                source code of this program.
-    -c, --config <conf>         use <conf> as the config file
-    -s, --scal                  interpret jobids as scalids
-    -o, --out                   prints the stdout output of the job (conflicts with -e|-j)
-    -e, --err                   prints the stderr output of the job (conflicts with -o|-j)
-    -j, --job                   prints the corresponding jobsub file (conflicts with -o|-e)
-    -d, --debug <format>        prints the corressponding debug file. Available formats:
-                                vgf prints the specified valgrind's --log-file format,
-                                vgl prints the generated process ids,
-                                vgp prints valgrind's generated log file(s),
-                                vgp%d prints the corresponding valgrind logfile
-                                where %p is the process id,
-                                vgpl%d is similar to vgp%d but %d is the logical
-                                (starting from 1) process id"
+    ${script_name}  [-h|-a] [-c CONF] [-s]
+    ${_pad}  [-o|-e|-j|-d FORMAT] jobid [jobid2 [... [jobidn]]]
+Options:
+    -h, --help          prints usage
+    -a, --notice        prints startup notice on how to retrieve the source code
+                        of this program.
+    -c CONF, --config CONF
+                        use CONF as the config file.
+                        Defaults to "${config_file}"
+    -s, --scal          interpret jobids as scalids
+    -o, --out           prints the stdout output of the job, this is the default
+    -e, --err           prints the stderr output of the job
+    -j, --job           prints the corresponding jobsub file
+    -d FORMAT, --debug FORMAT
+                        prints the corressponding debug file. Available formats:
+                        vgf prints the specified valgrind's --log-file format,
+                        vgl prints the generated process ids,
+                        vgp prints valgrind's generated log file(s),
+                        vgp%d prints the corresponding valgrind logfile where
+                        %d is the process id,
+                        vgpl%d is similar to vgp%d but %d is the logical
+                        (starting from 1) process id
+Examples:
+    # print the stdout output of jobid = 1
+    \$ ${script_name} 1
+    # Assume we submitted a scaljob with scalid = 1 and jobids = 1 2 3
+    # the below will print the stdout output of jobids 1 2 3
+    \$ ${script_name} -s 1"
 
 printnotice () {
     echo "${startup_notice}"
