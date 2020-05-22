@@ -1,26 +1,53 @@
 #!/bin/sh
-# Author: Ali Cherry
+# Copyright 2020 Ali Cherry <cmcrc@alicherry.net>
+# This file is part of SGE Utils.
+#
+# SGE Utils is free software: you can redistribute it and/or modify
+# it under the terms of the GNU Affero General Public License as published by
+# the Free Software Foundation, either version 3 of the License, or
+# any later version.
+#
+# SGE Utils is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU Affero General Public License for more details.
+#
+# You should have received a copy of the GNU Affero General Public License
+# along with SGE Utils.  If not, see <https://www.gnu.org/licenses/>.
+
 # Constraint/note: suitable if username does not contain '~'
 set -e
 
 config_file="/etc/sge-utils/jobsub.conf"
 
+startup_notice="\
+SGE Utils Copyright 2020 Ali Cherry <cmcrc@alicherry.net> under GNU Affero
+General Public License version 3 or any later version. Source code retrievable
+from https://github.com/alichry/sge-utils"
+
 usage="Job sumission usage:
     `basename "${0}"` [OPTIONS] <environment> <slots> <program> [args..]
 OPTIONS:
     -h, --help                  prints usage
+    -a, --notice                prints startup notice on how to retrieve the
+                                source code of this program.
     -c, --config <conf>         use <conf> as the config file
     -t, --template <name>       use <name> as the template name
     -s, --scal                  submits multiple jobs, each using up to <slots> (1,2,4,8,..,<slots>)
     -n, --no-output-sl          do not create symbolic link in current working directory
 Where:
-    <environment> is the desired environment -- acceptable values are 'mpi', 'cuda' and 'smp'
+    <environment> is the desired environment -- acceptable values are mpi and smp.
     <slots> is the number of requested slots (for MPI this is # of cores),
     <program> is an executable. A compiled binary, script or command,
     and [args..] as optional arguments that are passed to your program.
 Example: `basename "${0}"` mpi 1 a.out # will submit the compiled MPI program a.out with 1 core"
 
+printnotice() {
+    echo "${startup_notice}"
+}
+
 printusage () {
+    printnotice
     echo "${usage}"
 }
 
@@ -54,28 +81,32 @@ valcl () {
     # @out prog_args
     local arg
 
-    while [ "$#" -gt 3 ]
+    while [ "$#" -gt 0 ]
     do
         case "$1" in
+            -a|--notice)
+                printnotice
+                exit 0
+                ;;
             -h|--help)
                 printusage
                 exit 0
                 ;;
             -c|--config)
                 config_file="$2"
-                shift 2
+                shift `maxshift 2 "$#"`
                 ;;
             -t|--template)
                 sub_template_name="$2"
-                shift 2
+                shift `maxshift 2 "$#"`
                 ;;
             -s|--scal)
                 option_scal=1
-                shift 1
+                shift `maxshift 1 "$#"`
                 ;;
             -n|--no-output-sl)
                 no_output_sl=1
-                shift 1
+                shift `maxshift 1 "$#"`
                 ;;
             *)
                 break
@@ -118,6 +149,27 @@ valcl () {
     return 0
 }
 
+maxshift () {
+    # $1 - the desired shift
+    # $2 - the "$#" of the caller
+    local desired
+    local nargs
+    desired="${1}"
+    nargs="${2}"
+    if [ -z "${desired}" ]; then
+        echo "error: maxshift - desired is not defined or empty" 1>&2
+        return 1
+    fi
+    if [ -z "${nargs}" ]; then
+        echo "error: maxshift - nargs is not defiend or empty" 1>&2
+        return 1
+    fi
+    if [ "${desired}" -gt "${nargs}" ]; then
+        echo "${nargs}"
+    else
+        echo "${desired}"
+    fi
+}
 
 nextindex () {
     # $1 lif
