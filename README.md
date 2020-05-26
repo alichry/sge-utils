@@ -191,3 +191,5 @@ sub_template = /etc/sge-utils/templates/valgrindsmpsub.job.template
 * Maybe seperate the usage of jobcat -d into a different tool.
 * Add usage, limitations and requirements in job templates.
 * Check for POSIX compliance
+* Add a C program that parses the configuration files instead of using sequence of sed processes and configure its path in install.sh. This in turn will remove previously mentioned limitations of double quotes in the configuration file.
+* Investigate the potential benefit of storing the job files data in a simple file database instead of relying on paths to map job id to job file. This will save on inodes but we will rely on byte offset and paginating jobfiles (similar to scal structure), however, to delete a jobfile it would be either padded with null bytes or shifted.
